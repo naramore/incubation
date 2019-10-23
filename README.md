@@ -18,7 +18,7 @@ apps/
 |  mutant/                  # mutation testing for ExUnit
 |  prop_bench/              # benchmark b/t StreamData, PropCheck, PropEr, ExCheck, Quixir
 |  rand_scheduler/          # re-implement PULSE / Concuerror + auto-instrumentation (compiler?)
-|  spec/                    # e.g. clojure.spec
+|  ex_spec/                    # e.g. clojure.spec
 |  test_check/              # re-implement StreamData/PropEr/QuickCheck?
 ```
 
