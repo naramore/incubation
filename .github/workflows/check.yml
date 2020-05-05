@@ -1,0 +1,38 @@
+on: push
+jobs:
+  check:
+    env:
+      MIX_ENV: test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-elixir@v1
+      with:
+        otp-version: 22.3
+        elixir-version: 1.10.3
+    - uses: actions/cache@v1
+      with:
+        path: deps
+        key: ubuntu-elixir-latest-deps-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          ubuntu-elixir-latest-deps-
+    - uses: actions/cache@v1
+      with:
+        path: _build
+        key: ubuntu-elixir-latest-build-${{ hashFiles('**/*.ex') }}
+        restore-keys: |
+          ubuntu-elixir-latest-build-
+    - run: mix deps.get
+    - run: mix compile
+    - run: mix format --check-formatted
+      if: always()
+    - run: mix coveralls.json
+      if: always()
+    # - uses: codecov/codecov-action@v1.0.3
+    #   with:
+    #     token: ${{secrets.CODECOV_TOKEN}}
+    #     file: ./cover/excoveralls.json
+    - run: mix credo
+      if: always()
+    - run: mix dialyzer
+      if: always()

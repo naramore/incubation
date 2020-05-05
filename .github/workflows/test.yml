@@ -1,0 +1,30 @@
+on: push
+jobs:
+  test:
+    env:
+      MIX_ENV: test
+    runs-on: ubuntu-latest
+    name: OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }}
+    strategy:
+      matrix:
+        # see https://hexdocs.pm/elixir/compatibility-and-deprecations.html
+        otp: [19.3, 20.3, 21.3, 22.3]
+        elixir: [1.7.4, 1.8.2, 1.9.4, 1.10.3]
+        exclude:
+          - otp: 19.3
+            elixir: 1.8.2
+          - otp: 19.3
+            elixir: 1.9.4
+          - otp: 19.3
+            elixir: 1.10.3
+          - otp: 20.3
+            elixir: 1.10.3
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-elixir@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - run: mix test
