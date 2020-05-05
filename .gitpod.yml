@@ -1,6 +1,7 @@
 image:
   file: .gitpod.dockerfile
-
+tasks:
+  - init: mix do local.hex --force, local.rebar --force
 vscode:
   extensions:
     - elixir-lsp.elixir-ls@0.3.2:Xa3JtoFZTojUD2x30lqv4Q==
