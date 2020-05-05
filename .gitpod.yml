@@ -1,2 +1,6 @@
 image:
   file: .gitpod.dockerfile
+
+vscode:
+  extensions:
+    - elixir-lsp.elixir-ls@0.3.2:Xa3JtoFZTojUD2x30lqv4Q==

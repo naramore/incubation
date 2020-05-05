@@ -1,0 +1,17 @@
+{
+    "workbench.iconTheme": "theia-file-icons",
+
+    // Based on Elixir formatter's style
+    "editor.insertSpaces": true,
+    "editor.tabSize": 2,
+  
+    // Provides smart completion for "do" and "fn ->" blocks. Does not run the Elixir formatter.
+    "editor.formatOnType": true,
+  
+    // Misc
+    "editor.wordBasedSuggestions": false,
+    "editor.trimAutoWhitespace": false,
+  
+    // See below
+    "editor.acceptSuggestionOnEnter": "off"
+}

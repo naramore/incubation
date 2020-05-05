@@ -1,18 +1,5 @@
 defmodule Interceptor do
-  @moduledoc """
-  Documentation for `Interceptor`.
-  """
-
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> Interceptor.hello()
-      :world
-
-  """
-  def hello do
-    :world
-  end
+  # see http://pedestal.io/reference/interceptors
+  # see https://lispcast.com/a-model-of-interceptors/
+  # see https://github.com/exoscale/interceptor
 end
