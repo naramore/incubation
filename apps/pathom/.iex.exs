@@ -31,7 +31,6 @@ defmodule Digraph do
     - [x] digraph -> resolvers
     - [x] digraph -> io
     - [x] digraph -> attributes
-    - [ ] digraph -> graph_index_attrs?
     - [ ] digraph + ast -> plan{nodes: [resolver | and | or]}
     - [ ] traverse(plan, entity, (node, entity -> {node, entity})) -> entity
   """
@@ -251,134 +250,91 @@ defmodule Digraph do
       attributes: attributes(dg)
     }
   end
-
-  def plan(graph, query) do
-    case EQL.query_to_ast(query) do
-      {:error, reason} -> {:error, reason}
-      {:ok, ast} ->
-        {ast, available} =
-          Enum.reduce(ast.children, {[], %{}}, fn
-            %Property{key: [k | v]}, {ns, av} -> {ns, Map.put(av, k, v)}
-            %{__struct__: m} = n, {ns, av} when m in [Property, Join] -> {[n | ns], av}
-            _, acc -> acc
-          end)
-
-        plan = %{
-          graph: :digraph.new(),
-          available: available,
-          unreachable: [],
-          trail: []
-        }
-
-        # NOTE: label edges w/ the attr they are executing for
-        Enum.reduce(ast, plan, fn %{key: attr}, plan ->
-        end)
-    end
+  
+  @type plan :: [[atom | {:and, [plan]}]]
+  
+  # FIXME: translate will only work with single output resolvers atm
+  def translate(index, []), do: []
+  def translate(index, [h | t]) when is_list(h) do
+    [translate(index, h) | translate(index, t)]
+  end
+  def translate(index, [{:and, ps, n} | t]) do
+    %{input: ni, output: [no]} = Map.get(index.resolvers, n)
+    [{:and, translate(index, ps), {ni, no}} | translate(index, t)]
+  end
+  def translate(index, [h | t]) do
+    %{input: [i], output: [o]} = Map.get(index.resolvers, h)
+    [{i, o} | translate(index, t)]
+  end
+  
+  def new_acc() do
+    %{plan: [], unreachable_attrs: MapSet.new([]), attr_trail: [], res_trail: [], count: 0}
   end
 
-  def digraph_walk(dg, source_attrs, dest_attrs) do
-    plan = :digraph.new()
-    _ = Enum.each(dest_attrs, &{&1, digraph_walk(dg, source_attrs, &1, plan)})
-    plan
-  end
-
-  def digraph_walk(dg, source_attrs, dest_attr, plan) do
-    :digraph.in_edges(dg, dest_attr)
-    |> Enum.map(&:digraph.edge(dg, &1))
-    |> Enum.map(fn {e, i, o, %{id: id}} ->
-      if known?(i, source_attrs) do
-        :digraph.add_vertex(plan, id, %{input: i, source: [o]})
-      else
-        case digraph_walk(dg, source_attrs, i, plan) do
-          [] -> nil
-          [v | vs] ->
-            # create vertex / update existing vertex sources
-            # connect
+  def walk(graph, source_attrs, attr, acc) do
+    :digraph.in_edges(graph, attr)
+    |> Enum.map(&:digraph.edge(graph, &1))
+    |> Enum.reduce(acc, fn
+      {_, i, _, %{id: id}}, acc ->
+        cond do
+          i in acc.unreachable_attrs -> acc
+          i in acc.attr_trail -> %{acc | unreachable_attrs: MapSet.put(acc.unreachable_attrs, i)}
+          known?(i, source_attrs) -> %{acc | plan: [[id | acc.res_trail] | acc.plan], count: acc.count + 1}
+          is_list(i) and length(i) > 1 ->
+            state =
+              Enum.reduce(i, %{acc: acc, plans: []}, fn i, s ->
+                case walk(graph, source_attrs, i, %{new_acc() | attr_trail: [attr | s.acc.attr_trail]}) do
+                  %{count: 0} = acc -> %{s | acc: %{s.acc | unreachable_attrs: acc.unreachable_attrs}, plans: [{i, []} | s.plans]}
+                  acc -> %{s | acc: %{s.acc | unreachable_attrs: acc.unreachable_attrs}, plans: [{i, acc.plan} | s.plans]}
+                end
+              end)
+            if Enum.all?(state.plans, fn {_, p} -> length(p) > 0 end) do
+              and_plan = [{:and, Enum.map(state.plans, &elem(&1, 1)), id} | acc.res_trail]
+              %{acc | plan: [and_plan | acc.plan], unreachable_attrs: state.acc.unreachable_attrs, count: acc.count + 1}
+            else
+              %{acc | unreachable_attrs: MapSet.put(acc.unreachable_attrs, i)}
+            end
+          true ->
+            case walk(graph, source_attrs, i, %{acc | attr_trail: [attr | acc.attr_trail], res_trail: [id | acc.res_trail], count: 0}) do
+              %{count: 0, unreachable_attrs: uattrs} -> %{acc | unreachable_attrs: uattrs}
+              %{plan: plan, unreachable_attrs: uattrs} -> %{acc | plan: plan, unreachable_attrs: uattrs, count: acc.count + 1}
+            end
         end
-      end
     end)
-    |> Enum.reject(&is_nil/1)
-
+  end
+  
+  # TODO: Enum.map(dest_attrs, &walk/4)
+  #       |> Enum.reduce(plan, &collapse_paths/2)
+  # => plan_digraph
+  
+  def create_vertex(graph, dest, source \\ nil)
+  def create_vertex(graph, dest, nil) do
+    _ = :digraph.add_vertex(graph, dest)
+    graph
+  end
+  def create_vertex(graph, dest, source) do
+    _ = create_vertex(graph, dest, nil)
+    
+    :digraph.out_neighbours(graph, source)
+    |> Enum.map(&:digraph.vertex(graph, &1))
+    |> case do
+      [] -> :digraph.add_edge(graph, source, dest)
+      [{next, :or}] -> :digraph.add_edge(graph, next, dest)
+      [{next, _}] ->
+        or_vertex = :digraph.add_vertex(graph)
+        or_vertex = :digraph.add_vertex(graph, or_vertex, :or)
+        [e] = :digraph.out_edges(graph, dest)
+        _ = :digraph.add_edge(graph, e, source, or_vertex, nil)
+        :digraph.add_edge(graph, e, or_vertex, dest, nil)
+      _ -> nil
+    end
+    
+    graph
   end
 
   def known?([], _known), do: true
   def known?(input, known) when is_list(input), do: Enum.all?(input, &(&1 in known))
   def known?(input, known), do: input in known
-
-  # more of a 'copy' of pathom's compute-run-graph logic
-  def reader_old(index, query, acc \\ %{}) do
-    case EQL.query_to_ast(query) do
-      {:error, reason} -> {:error, reason}
-      {:ok, ast} ->
-        {ast, available} =
-          Enum.reduce(ast.children, {[], %{}}, fn
-            %Property{key: [k | v]}, {ns, av} -> {ns, Map.put(av, k, v)}
-            %{__struct__: m} = n, {ns, av} when m in [Property, Join] -> {[n | ns], av}
-            _, acc -> acc
-          end)
-
-          plan = %{
-            graph: :digraph.new(),
-            available: available,
-            unreachable: [],
-            trail: []
-          }
-          root = :digraph.add_vertex(plan.graph, :__root__, %{provides: available})
-          plan = Map.put(plan, :root, root)
-
-          Enum.reduce(ast, plan, fn %{key: attr}, plan ->     # ast / {o, [{i, [r]}]}
-            if attr in plan.available or
-               attr in plan.unreachable or
-               attr in plan.trail or
-               Map.has_key?(index.oir, attr) or
-               is_nil(get_attribute_node(plan, attr)) do
-              plan
-            else
-              Map.get(index.oir, attr)
-              |> Enum.reduce(plan, fn {i, rs}, plan ->        # {i, [r]}
-                if in_input?(attr, i) do
-                  plan
-                else
-                  Enum.reduce(rs, plan, fn r, plan ->         # r
-                    if r in plan.unreachable_resolvers do
-                      plan
-                    else
-                      v = :digraph.add_vertex(plan.graph)
-                      :digraph.add_vertex(plan.graph, v, %{
-                        resolver: r,
-                        requires: %{attr => %{}},
-                        input: Enum.map(i, &{&1, %{}}) |> Enum.into(%{}),
-                        # params: ???,
-                      })
-                      # |> compute_root_or(...)
-                    end
-                  end)
-                  # |> compute_missing(...)
-                  # |> compute_root_or(...)
-                end
-              end)
-              # |> compute_root_and(...)
-            end
-          end)
-    end
-  end
-
-  def in_input?(attr, input) when is_list(input) do
-    attr in input
-  end
-  def in_input?(attr, attr), do: true
-  def in_input?(_, _), do: false
-
-  def get_attribute_node(plan, attr) do
-    plan.graph
-    |> :digraph.vertices()
-    |> Enum.map(&:digraph.vertex(plan.graph, &1))
-    |> Enum.filter(fn {_, %{provides: p}} -> attr in p end)
-    |> case do
-      [{n, _} | _] -> n
-      _ -> nil
-    end
-  end
 end
 
 pp = &IO.inspect(&1, pretty: true, limit: :infinity, printable_limit: :infinity)
@@ -669,3 +625,41 @@ xen_index = Digraph.index(xen_resolvers, xg)
 dg = :digraph.new()
 index = Digraph.index(resolvers, dg)
 # pp.(index)
+
+strange = [
+  %{id: :r1, input: [:a], output: [:b]},
+  %{id: :r2, input: [:c], output: [:d]},
+  %{id: :r3, input: [:c], output: [:e]},
+  %{id: :r4, input: [:e], output: [:l]},
+  %{id: :r5, input: [:l], output: [:m]},
+  %{id: :r6, input: [:l], output: [:n]},
+  %{id: :r7, input: [:n], output: [:o]},
+  %{id: :r8, input: [:m], output: [:p]},
+  %{id: :r9, input: [:o], output: [:p]},
+  %{id: :r10, input: [:g], output: [:k]},
+  %{id: :r11, input: [:h], output: [:g]},
+  %{id: :r12, input: [:i], output: [:h]},
+  %{id: :r13, input: [:j], output: [:i]},
+  %{id: :r14, input: [:g], output: [:j]},
+  %{id: :r15, input: [:b, :d], output: [:f]},
+  %{id: :r16, input: [:q], output: [:r]},
+  %{id: :r17, input: [:t], output: [:v]},
+  %{id: :r18, input: [:u], output: [:v]},
+  %{id: :r19, input: [:v], output: [:w]},
+  %{id: :r20, input: [:r, :w], output: [:s]},
+  %{id: :r21, input: [:s], output: [:y]},
+  %{id: :r22, input: [:y], output: [:z]},
+  %{id: :r23, input: [:z], output: [:o]},
+  %{id: :r24, input: [:aa], output: [:ab]},
+  %{id: :r25, input: [:ab], output: [:z]},
+  %{id: :r26, input: [:ac], output: [:y]},
+  %{id: :r27, input: [:ad], output: [:ac]},
+  %{id: :r28, input: [:ae], output: [:ad]},
+  %{id: :r29, input: [:ae], output: [:af]},
+  %{id: :r30, input: [:af], output: [:ab]},
+  %{id: :r31, input: [:ad], output: [:ab]},
+]
+sg = :digraph.new()
+strange_index = Digraph.index(strange, sg)
+sres = Digraph.walk(sg, [:a, :c, :q, :t, :u, :ae], :p, Digraph.new_acc())
+Digraph.translate(strange_index, sres.plan) |> pp.()
