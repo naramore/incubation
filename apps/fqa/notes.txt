@@ -1,0 +1,58 @@
+overview:
+  - both Clojure & Elixir/Erlang have keywords/atoms
+  - Clojure's keywords support namespacing first-class
+  - Elixir's closest analog is a 2-tuple: `{module, atom}`
+  - I've been interested in GraphQL for a while, then stubbled upon pathom/eql
+  - I'm interested in a pathom, eql, edn equivalent in Elixir, using Elixir datastructures
+  - potential solutions to atom namespacing:
+    - :"Foo.Bar/baz"                                      <- least idiomatic for Elixir, delimeter b/t ns & name is 'arbitrary', but 'closest' to Clojure?
+    - {Foo.Bar, :baz}                                     <- most idiomatic for Elixir
+    - %MyStruct{namespace: Foo.Bar, name: :baz} + Inspect <- custom/arbitrary, would 'look nice' (b/c Inspect)
+    - first-class support at Elixir/Erlang level?         <- hard? less likely to happen? worth it?
+rationale:
+why not just use Absinthe?:
+  - TL;DR; -> types
+
+edn:
+  nil: `nil`
+  booleans: `true` & `false`
+  atoms: `:foo` or `:"foo"`
+  floats: `1.0`, `1.0e0`
+  char: `?a` (just integers really)
+  unicode: `"\u00A9"` or `0x00A9`
+  integers: `42`
+  strings: `"foo"` or `""" ... """` (multi-line) + https://hexdocs.pm/elixir/String.html#module-escape-characters
+  erlang strings: same as strings but w/ `'` instead of `"`
+  maps: `%{}` or `%{:a => 1, :b => 2}` or `%{a: 1, b: 2}`
+  lists: `[]` or `[1, 2, 3]` or `[1 | 0]` or `[1, 2 | nil]`
+  tuples: `{}` or `{42}` or `{1, 2, 3}`
+  bitstrings: `<< >>` (see https://hexdocs.pm/elixir/Kernel.SpecialForms.html#%3C%3C%3E%3E/1)
+  keyword lists: `[{:a, 1}, {:b, 2}]` == `[a: 1, b: 2]`
+  structs: `%Foo{...}`
+  comments: `#`
+  module: `Foo.Bar` | `:erlang`
+  sigils: `~s//` + allowed delimiters + modifiers
+  
+eql:
+  query/transactions: `[]`
+  properties: `atom` or `{module, atom}`
+  joins: `%{... => ...}` (single-element only)
+  idents: `[property, term]`
+  unions: `%{... => ...}` (2 or more elements only)
+  mutations: `{module, atom, [...]}`
+  parameters: `[... | %{optional(atom) => term}]`
+
+pathom:
+
+
+references:
+  https://github.com/edn-format/edn
+  https://graphql.github.io/
+  https://github.com/absinthe-graphql/absinthe
+  https://clojure.org/
+  https://clojuredocs.org/clojure.core/keyword
+  https://clojuredocs.org/clojure.core/name
+  https://clojuredocs.org/clojure.core/namespace
+  https://github.com/wilkerlucio/pathom
+  https://github.com/edn-query-language/eql
+  https://docs.datomic.com/cloud/whatis/data-model.html#defining-schema

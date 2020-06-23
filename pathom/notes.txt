@@ -1,0 +1,293 @@
+
+# NOTE: how to return the 'result' w/o relying on `(swap! env ...)` or some equivalent?
+# TODO: Pathom.Env (w/ freeform context for extension)
+Pathom.Env
+  index
+  context
+  path
+  ???
+Pathom.Plan.Planner (protocol)
+  @spec compute(t, plan, env) :: any
+    # NOTE: impl -> EQL.AST.*
+    # compute == graph |> collapse ?
+Pathom.Plan.Node (protocol)
+  #     execute
+  @spec traverse(t, plan, env) :: any
+           .Node.Resolver
+                .And
+                .Or
+           .Graph
+
+data -> available, path, deps-trail, unreachable
+gacc -> index, data, ast, attr
+compute_run_graph(graph, gacc):
+  query.children
+  |> Enum.reject(&EQL.AST.Property.ident?/1)
+  |> Enum.reduce(graph, fn
+    %{__struct__: t} = ast, graph when t in [Property, Join] ->
+      compute_attribute_graph(graph, %{gacc | ast: ast})
+    _, graph -> graph
+  end)
+compute_attribute_graph(%{root: root} = graph, gacc):
+  cond do
+    available?(gacc, attr) or unreachable?(gacc, attr) ->
+      graph
+    indexed?(gacc, attr) ->
+      # if indexed on the graph -> update_graph + compute_root_and
+      # otherwise -> update graph index + compute_root_and
+      case get_in(graph, [:index_attrs, attr]) do
+        nil ->
+          graph =
+            %{graph | root: nil}
+            |> (&Enum.reduce(get_in(gacc, [:index, :oir, attr]), &1, fn {is, rs}, g ->
+              compute_input_resolvers_graph(g, gacc, is, rs)
+            end)).()
+            |> set_node_source_for_attrs(gacc)
+          if is_nil(graph.root) do
+            %{graph | root: root}
+          else
+            compute_root_and(graph, gacc, %{node_id: root})
+          end
+        node_id ->
+          graph
+          |> merge_node_requires(node_id, %{attr => %{}})
+          |> push_root_to_ancestor(node_id)
+          |> compute_root_and(gacc, %{node_id: root})
+      end
+    _ ->
+      Map.update!(graph, :unreachable, &MapSet.put(&1, attr))
+  end
+compute_input_resolvers_graph(graph, gacc, inputs, resolvers):
+compute_root_and(graph, gacc, node):
+  if graph.root == node.id do
+    graph
+  else
+    compute_root_branch(graph, gacc, %{node | branch: :and}, fn ->
+      %{requires: reqs} = get_root_node(graph)
+      %{id: next_node_id(gacc)
+        requires: reqs,
+        run_and: MapSet.new([graph.root])}
+    end)
+  end
+set_node_source_for_attrs(graph, gacc):
+merge_node_requires(graph, node_id, node):
+push_root_to_ancestor(graph, node_id):
+compute_root_branch(graph, gacc, node, node_fun):
+  
+  
+
+
+
+
+
+reader3
+  pt/trace
+  p/path-without-placeholders
+  pt/tracing
+  reader3-prepare-ast
+    pcp/prepare-ast
+    p/query->ast
+  pt/trace-enter
+  reader3-compute-run-graph
+    pt/trace-enter
+    pcp/compute-run-graph
+    pt/trace-leave
+  pcp/get-root-node
+  reader3-run-node
+    pcp/node-kind
+    reader3-run-resolver-node
+      reader3-all-requires-ready?
+        p/entity
+      reader3-node-log!
+      reader3-run-next-node
+        reader3-run-node
+        pcp/get-node
+      p/entity
+      async-read-cache-read
+      serial-cache-resolver-call
+      call-resolver
+      reader3-merge-resolver-response
+        reader3-report-invalid-response
+          pt/trace
+    reader3-run-and-node
+      reader3-node-log!
+      reader3-run-and-node-async
+        reader3-run-node
+        pcp/get-node
+        reader3-all-requires-ready?
+        reader3-run-next-node
+      reader3-run-and-node-sync
+        reader3-run-node
+        pcp/get-node
+        reader3-run-next-node
+    reader3-run-or-node
+      reader3-node-log!
+      reader3-run-or-node-async
+        reader3-run-node
+        pcp/get-node
+        reader3-all-requires-ready?
+        reader3-run-next-node
+      reader3-run-or-node-sync
+        reader3-run-node
+        pcp/get-node
+        reader3-all-requires-ready?
+        reader3-run-next-node
+  pt/trace-leave
+  p/reader
+
+compute-run-graph
+  base-graph
+  compute-run-graph*
+    ast-node
+    compute-attribute-graph
+      compute-attribute-graph*
+        get-attribute-node
+        merge-node-requires
+        push-root-to-ancestor
+          set-root-node
+          find-first-ancestor
+            node-direct-ancestor-chain
+              get-node
+            get-node
+        compute-root-and
+          compute-root-branch
+            get-root-node
+            get-node
+            pc-sym
+            set-root-node
+            collapse-nodes-branch
+              merge-nodes-foreign-ast
+                get-node
+              merge-node-requires
+              merge-node-input
+              merge-nodes-params
+                params-conflicting-keys
+                add-warning
+              merge-nodes-run-next
+                get-node
+                same-resolver?
+                  pc-sym
+                collapse-dynamic-nodes
+                set-root-node
+                compute-root-and
+                collapse-set-node-run-next
+                  get-node
+                  same-resolver?
+                  collapse-nodes-chain
+                  set-node-run-next
+                    get-node
+                    remove-after-node
+                      get-node
+                      assoc-node
+                    set-node-run-next*
+                      assoc-node
+                    add-after-node
+              transfer-node-source-attrs
+              transfer-node-after-nodes
+                set-node-run-next
+              remove-node
+                get-node
+                pc-sym
+                remove-branch-node-after-nodes
+                  get-node
+                  node-branches
+                  remove-after-node
+                remove-after-node
+            can-merge-and-nodes?
+            collapse-and-nodes
+              get-node
+              can-merge-and-nodes?
+              branch-add-and-node
+                add-after-node
+              set-node-run-next*
+              transfer-node-after-nodes
+              remove-node
+            add-branch-node
+              get-node
+              find-branch-node-to-merge
+                pc-sym
+              collapse-nodes-branch
+              merge-node-requires
+              add-branch-node
+              remove-node
+              add-after-node
+              merge-node-requires
+              optimize-merge?
+            create-branch-node
+              optimize-merge?
+              add-after-node
+                update-node
+              set-after-node
+                assoc-node
+              set-root-node
+              add-branch-node
+            branch-node-factory
+          get-root-node
+          next-node-id
+        compute-input-resolvers-graph
+          pc-attr
+          compute-resolver-graph
+            runner-node-sym
+              pc-dyn-sym
+            create-resolver-node
+              dynamic-resolver?
+              compute-nested-node-details
+                p/maybe-merge-union-ast
+                compute-run-graph*
+                base-graph
+                inject-index-nested-provides
+                  resolver-provides
+                    pci/resolver-provides
+                pc-sym
+                root-execution-node?
+                  node-ancestors
+                  get-node
+                get-node
+                p/ast->shape-descriptor
+                eql/ast->query
+              get-node
+              pc-sym
+              next-node-id
+            include-node
+              pc-sym
+            compute-root-or
+              compute-root-branch
+              next-node-id
+          compute-missing-chain
+            compute-run-graph*
+            pc-attr
+            eql/query->ast
+            find-missing-ancestor
+              get-attribute-node
+              first-common-ancestor
+                node-ancestors
+                  p.misc/queue
+                  get-node
+                first-common-ancestor
+            merge-nodes-run-next
+            get-root-node
+            merge-node-requires
+            mark-node-unreachable
+              collect-syms
+                collect-syms
+                pc-sym
+                dynamic-resolver?
+                direct-node-successors
+                  node-branches
+              get-root-node
+              all-attribute-resolvers
+              pc-attr
+            all-attribute-resolvers
+          compute-root-or
+          set-root-node
+        set-node-source-for-attrs
+          node-for-attribute-in-chain
+            get-node
+            node-for-attribute-in-chain
+        set-root-node
+      add-unreachable-attr
+prepare-ast
+  p/entity
+  p/lift-place-holder-ast
+graph-provides
+      
