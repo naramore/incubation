@@ -1,41 +1,26 @@
 defmodule Digraph do
   @moduledoc """
   TENTATIVE, NAIVE, UNOPTIMIZED, INCOMPLETE
-
-  NOTES:
-    - {module, atom} properties, unions, and multi-inputs may not work...
-      - add the 'virtual' in_edges for multi-inputs (for indexing purposes only)
-      - add the edges for multi-inputs, but label them differently (would require filtering these out...)
-        - I'm leaning more towards this one (b/c traversal -> plan might be more straightforward?)
-    - refactor to remove all instances of `++`
-    - entity -> all attributes gathered + unreachable + path + deps
-      - 'where we are', 'where we have been', and 'everything gathered along the way'
-      - entity + ast -> result (i.e. traverse ast & entity -> build result)
-    - plan graph nodes will need to have ids + labels w/ attributes (b/c graph 'collapsing')
-    - plan traversal:
-      - accumulation:
-        - track attributes / nodes (+ structure to build 'entity')
-        - track past resolvers / edges
-        - track missing attributes / output
-      - what step next? when nothing is directly achievable, what gets me closer?
-      - track 'reductions' for optimizing paths? (path traversal optimization?)
-      - plan nodes:
-        - resolver
-        - and
-        - or
-      - plan edges -> resolver execution order & deps
-
-  TODO:
-    - [x] resolvers -> digraph
-    - [x] digraph -> oir
-    - [x] digraph -> resolvers
-    - [x] digraph -> io
-    - [x] digraph -> attributes
-    - [ ] digraph + ast -> plan{nodes: [resolver | and | or]}
-    - [ ] traverse(plan, entity, (node, entity -> {node, entity})) -> entity
   """
   import Kernel, except: [update_in: 3]
   alias EQL.AST.{Join, Property, Root, Union, Union.Entry}
+  require Logger
+  
+  defstruct vertices: [],
+            edges: [],
+            options: []
+  @type t :: %__MODULE__{
+    vertices: [vertex],
+    edges: [edge],
+    options: [:digraph.d_type]
+  }
+  
+  @type vertex :: {:digraph.vertex, :digraph.label}
+  @type edge :: {:digraph.edge, :digraph.vertex, :digraph.vertex, :digraph.label}
+  
+  def from_digraph(dg) do
+    
+  end
 
   def resolver(id, input, output \\ []) do
     %{
@@ -254,7 +239,7 @@ defmodule Digraph do
   @type plan :: [[atom | {:and, [plan]}]]
   
   # FIXME: translate will only work with single output resolvers atm
-  def translate(index, []), do: []
+  def translate(_index, []), do: []
   def translate(index, [h | t]) when is_list(h) do
     [translate(index, h) | translate(index, t)]
   end
@@ -270,42 +255,68 @@ defmodule Digraph do
   def new_acc() do
     %{plan: [], unreachable_attrs: MapSet.new([]), attr_trail: [], res_trail: [], count: 0}
   end
+  
+  def pipe_debug(result, msg) do
+    _ = Logger.debug(msg)
+    result
+  end
 
+  # TODO: refactor + change acc & state -> struct(s)
+  # TODO: change logging -> tracing?
   def walk(graph, source_attrs, attr, acc) do
+    _ = Logger.debug("enter walk: attr=#{attr}")
     :digraph.in_edges(graph, attr)
     |> Enum.map(&:digraph.edge(graph, &1))
     |> Enum.reduce(acc, fn
-      {_, i, _, %{id: id}}, acc ->
+      {e, i, o, %{id: id}}, acc ->
+        _ = Logger.debug("enter edge=#{inspect({e, i, o})}, path=#{inspect(acc.attr_trail)}")
         cond do
-          i in acc.unreachable_attrs -> acc
-          i in acc.attr_trail -> %{acc | unreachable_attrs: MapSet.put(acc.unreachable_attrs, i)}
-          known?(i, source_attrs) -> %{acc | plan: [[id | acc.res_trail] | acc.plan], count: acc.count + 1}
+          i in acc.unreachable_attrs ->
+            _ = Logger.debug("unreachable: attr=#{i}")
+            acc
+          i in acc.attr_trail ->
+            _ = Logger.debug("cyclic: attr=#{i}")
+            acc
+          known?(i, source_attrs) ->
+            _ = Logger.debug("known: attr=#{i}")
+            %{acc | plan: [[id | acc.res_trail] | acc.plan], count: acc.count + 1}
           is_list(i) and length(i) > 1 ->
+            _ = Logger.debug("and-branch: attr=#{inspect(i)}")
             state =
               Enum.reduce(i, %{acc: acc, plans: []}, fn i, s ->
-                case walk(graph, source_attrs, i, %{new_acc() | attr_trail: [attr | s.acc.attr_trail]}) do
-                  %{count: 0} = acc -> %{s | acc: %{s.acc | unreachable_attrs: acc.unreachable_attrs}, plans: [{i, []} | s.plans]}
-                  acc -> %{s | acc: %{s.acc | unreachable_attrs: acc.unreachable_attrs}, plans: [{i, acc.plan} | s.plans]}
+                _ = Logger.debug("continue walk: attr=#{inspect(i)}")
+                case walk(graph, source_attrs, i, %{s.acc | attr_trail: [attr | s.acc.attr_trail], res_trail: [], count: 0, plan: []}) do
+                  %{count: 0} = acc ->
+                    _ = Logger.debug("unreachable and-branch: attr=#{i} | unreachable=#{inspect(acc.unreachable_attrs)}")
+                    %{s | acc: %{s.acc | unreachable_attrs: MapSet.put(acc.unreachable_attrs, i)}, plans: [{i, []} | s.plans]}
+                  acc ->
+                    _ = Logger.debug("reachable and-branch: attr=#{i}")
+                    %{s | acc: %{s.acc | unreachable_attrs: acc.unreachable_attrs}, plans: [{i, acc.plan} | s.plans]}
                 end
               end)
             if Enum.all?(state.plans, fn {_, p} -> length(p) > 0 end) do
-              and_plan = [{:and, Enum.map(state.plans, &elem(&1, 1)), id} | acc.res_trail]
-              %{acc | plan: [and_plan | acc.plan], unreachable_attrs: state.acc.unreachable_attrs, count: acc.count + 1}
+              _ = Logger.debug("reachable and: attr=#{inspect(i)}")
+              and_plan = [{:and, Enum.map(state.plans, &elem(&1, 1)), id} | state.acc.res_trail]
+              %{state.acc | plan: [and_plan | state.acc.plan], count: acc.count + 1}
             else
-              %{acc | unreachable_attrs: MapSet.put(acc.unreachable_attrs, i)}
+              _ = Logger.debug("unreachable and: attr=#{inspect(i)}")
+              %{state.acc | unreachable_attrs: MapSet.put(state.acc.unreachable_attrs, i)}
             end
           true ->
+            _ = Logger.debug("continue walk: attr=#{i}")
             case walk(graph, source_attrs, i, %{acc | attr_trail: [attr | acc.attr_trail], res_trail: [id | acc.res_trail], count: 0}) do
-              %{count: 0, unreachable_attrs: uattrs} -> %{acc | unreachable_attrs: uattrs}
-              %{plan: plan, unreachable_attrs: uattrs} -> %{acc | plan: plan, unreachable_attrs: uattrs, count: acc.count + 1}
+              %{count: 0, unreachable_attrs: uattrs} ->
+                _ = Logger.debug("unreachable walk: attr=#{i}")
+                %{acc | unreachable_attrs: MapSet.put(uattrs, i)}
+              %{plan: plan, unreachable_attrs: uattrs} ->
+                _ = Logger.debug("reachable paths: attr=#{i}")
+                %{acc | plan: plan, unreachable_attrs: uattrs, count: acc.count + 1}
             end
         end
+        |> pipe_debug("leave edge=#{inspect({e, i, o})}")
     end)
+    |> pipe_debug("leave walk: attr=#{attr}")
   end
-  
-  # TODO: Enum.map(dest_attrs, &walk/4)
-  #       |> Enum.reduce(plan, &collapse_paths/2)
-  # => plan_digraph
   
   def create_vertex(graph, dest, source \\ nil)
   def create_vertex(graph, dest, nil) do
@@ -323,9 +334,10 @@ defmodule Digraph do
       [{next, _}] ->
         or_vertex = :digraph.add_vertex(graph)
         or_vertex = :digraph.add_vertex(graph, or_vertex, :or)
-        [e] = :digraph.out_edges(graph, dest)
+        [e] = :digraph.out_edges(graph, source)
         _ = :digraph.add_edge(graph, e, source, or_vertex, nil)
-        :digraph.add_edge(graph, e, or_vertex, dest, nil)
+        _ = :digraph.add_edge(graph, or_vertex, next)
+        :digraph.add_edge(graph, or_vertex, dest)
       _ -> nil
     end
     
@@ -335,6 +347,45 @@ defmodule Digraph do
   def known?([], _known), do: true
   def known?(input, known) when is_list(input), do: Enum.all?(input, &(&1 in known))
   def known?(input, known), do: input in known
+  
+  def to_graphvix(dg) do
+    g = Graphvix.Graph.new()
+    
+    {g, _} =
+      :digraph.vertices(dg)
+      |> Enum.reduce({g, nil}, fn v, {g, _} -> Graphvix.Graph.add_vertex(g, v) end)
+
+    {g, _} =
+      :digraph.edges(dg)
+      |> Enum.map(&:digraph.edge(dg, &1))
+      |> Enum.reduce({g, nil}, fn {_, i, o, label}, {g, _} ->
+        Graphvix.Graph.add_edge(g, i, o, Enum.into(label, []))
+      end)
+      
+    g
+  end
+end
+
+defmodule Digraph.Viz do
+  # DOT - https://graphviz.org/doc/info/lang.html
+  #   graph 	: 	[ strict ] (graph | digraph) [ ID ] '{' stmt_list '}'
+  #   stmt_list 	: 	[ stmt [ ';' ] stmt_list ]
+  #   stmt 	: 	node_stmt
+  #   	| 	edge_stmt
+  #   	| 	attr_stmt
+  #   	| 	ID '=' ID
+  #   	| 	subgraph
+  #   attr_stmt 	: 	(graph | node | edge) attr_list
+  #   attr_list 	: 	'[' [ a_list ] ']' [ attr_list ]
+  #   a_list 	: 	ID '=' ID [ (';' | ',') ] [ a_list ]
+  #   edge_stmt 	: 	(node_id | subgraph) edgeRHS [ attr_list ]
+  #   edgeRHS 	: 	edgeop (node_id | subgraph) [ edgeRHS ]
+  #   node_stmt 	: 	node_id [ attr_list ]
+  #   node_id 	: 	ID [ port ]
+  #   port 	: 	':' ID [ ':' compass_pt ]
+  #   	| 	':' compass_pt
+  #   subgraph 	: 	[ subgraph [ ID ] ] '{' stmt_list '}'
+  #   compass_pt 	: 	(n | ne | e | se | s | sw | w | nw | c | _)
 end
 
 pp = &IO.inspect(&1, pretty: true, limit: :infinity, printable_limit: :infinity)
@@ -365,7 +416,7 @@ xen_resolvers = [
   Digraph.resolver(
     :"citrix.xapi.vm/get-all",
     [],
-    [:"citrix.xapi.vm/opaque-reference"]
+    [%{:"citrix.xapi.vm/all" => [:"citrix.xapi.vm/opaque-reference"]}]
   ),
   Digraph.resolver(
     :"citrix.xapi.vif/get-record",
@@ -624,7 +675,6 @@ xen_index = Digraph.index(xen_resolvers, xg)
 
 dg = :digraph.new()
 index = Digraph.index(resolvers, dg)
-# pp.(index)
 
 strange = [
   %{id: :r1, input: [:a], output: [:b]},
@@ -658,8 +708,11 @@ strange = [
   %{id: :r29, input: [:ae], output: [:af]},
   %{id: :r30, input: [:af], output: [:ab]},
   %{id: :r31, input: [:ad], output: [:ab]},
+  %{id: :r32, input: [:f], output: [:k]},
+  %{id: :r33, input: [:k], output: [:p]},
 ]
 sg = :digraph.new()
 strange_index = Digraph.index(strange, sg)
-sres = Digraph.walk(sg, [:a, :c, :q, :t, :u, :ae], :p, Digraph.new_acc())
-Digraph.translate(strange_index, sres.plan) |> pp.()
+sres = Digraph.walk(sg, [:c, :q, :t, :u, :ae], :p, Digraph.new_acc())
+# Digraph.translate(strange_index, sres.plan) |> pp.()
+pp.(sres)
