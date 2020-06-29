@@ -6,10 +6,12 @@ defmodule Digraph do
   alias EQL.AST.{Join, Property, Root, Union, Union.Entry}
   require Logger
   
-  defstruct vertices: [],
+  defstruct graph: nil,
+            vertices: [],
             edges: [],
             options: []
   @type t :: %__MODULE__{
+    graph: :digraph.graph,
     vertices: [vertex],
     edges: [edge],
     options: [:digraph.d_type]
@@ -18,8 +20,15 @@ defmodule Digraph do
   @type vertex :: {:digraph.vertex, :digraph.label}
   @type edge :: {:digraph.edge, :digraph.vertex, :digraph.vertex, :digraph.label}
   
+  @spec from_digraph(:digraph.graph) :: t
   def from_digraph(dg) do
-    
+    {options, _} = Keyword.split(:digraph.info(dg), [:cyclicity, :protection])
+    %__MODULE__{
+      graph: dg,
+      vertices: Enum.map(:digraph.vertices(dg), &:digraph.vertex(dg, &1)),
+      edges: Enum.map(:digraph.edges(dg), &:digraph.edge(dg, &1)),
+      options: Keyword.values(options),
+    }
   end
 
   def resolver(id, input, output \\ []) do
@@ -366,7 +375,18 @@ defmodule Digraph do
   end
 end
 
+# TODO: performance testing on Digraph.walk/4
+#       
+
+# TODO: phoenix liveview digraph viewer / editor
+#       w/ search, filter, pathing (via highlighting)
+#       hover on edge highlights ALL edges in same resolver
+#       depth + direct/indirect inputs/outputs
+#       full graph, resolver(s) focus, attribute(s) focus
+#       list of: attributes, resolvers, edges
+#       transform multi-pathing on graph -> execution plan graph
 defmodule Digraph.Viz do
+  import Inspect.Algebra
   # DOT - https://graphviz.org/doc/info/lang.html
   #   graph 	: 	[ strict ] (graph | digraph) [ ID ] '{' stmt_list '}'
   #   stmt_list 	: 	[ stmt [ ';' ] stmt_list ]
@@ -386,6 +406,51 @@ defmodule Digraph.Viz do
   #   	| 	':' compass_pt
   #   subgraph 	: 	[ subgraph [ ID ] ] '{' stmt_list '}'
   #   compass_pt 	: 	(n | ne | e | se | s | sw | w | nw | c | _)
+  
+  @type id :: any
+  @type edge_op :: :-> | :--
+  @type graph_type :: :graph | :digraph
+  @type graph ::
+    {:strict, graph_type, id, [statement]} |
+    {graph_type, id, [statement]} |
+    {:strict, graph_type, [statement]} |
+    {graph_type, [statement]}
+  @type statement ::
+    node_statement |
+    edge_statement |
+    attribute_statement |
+    attribute |
+    subgraph
+  @type attribute_statement :: {:node | :graph | :edge, [attribute]}
+  @type attribute :: {id, id}
+  @type edge_statement :: {node_id | subgraph, edge_rhs, [attribute]}
+  @type edge_rhs ::
+    {edge_op, node_id | subgraph} |
+    {edge_op, node_id | subgraph, edge_rhs}
+  @type node_statement :: {node_id, [attribute]}
+  @type node_id :: id | {id, node_port}
+  @type node_port :: id | compass_point | {id, compass_point}
+  @type subgraph ::
+    {:subgraph, id, [statement]} |
+    {:subgraph, [statement]} |
+    [statement]
+  @type compass_point :: :n | :ne | :e | :se | :s | :sw | :w | :c | :_
+  
+  def to_dot({:strict, type, id, statements}, opts) do
+    space("strict #{type} #{id}", to_dot(statements, opts))
+  end
+  def to_dot(statements, opts) when is_list(statements) do
+    container_doc("{", statements, "}", opts, &to_dot/2, break: :flex, separator: ";")
+  end
+  def to_dot({node_id, attributes}, opts) when is_list(attributes) do
+  end
+  def to_dot({node_id, edge_rhs, attributes}, opts) when is_list(attributes) do
+  end
+  def to_dot({type, attributes}, opts) when type in [:node, :graph, :edge] and is_list(attributes) do
+  end
+  def to_dot({:subgraph, statements}, opts) when is_list(statements) do
+    to_dot(statements, opts)
+  end
 end
 
 pp = &IO.inspect(&1, pretty: true, limit: :infinity, printable_limit: :infinity)
